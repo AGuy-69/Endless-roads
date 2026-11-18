@@ -2917,6 +2917,24 @@ self.onmessage = (e) => {
       gl_FragColor = vec4((lb < lmin || lb > lmax) ? a : b, 1.0);
     }`;
 
+  const MBLUR = `
+    varying vec2 vUv; uniform sampler2D tIn, tDepth; uniform vec2 uRes; uniform float uAmt, uCarD, uNear, uFar, uTaps, uTime;
+    float lin(float d) { float z = d * 2.0 - 1.0; return 2.0 * uNear * uFar / (uFar + uNear - z * (uFar - uNear)); }
+    void main() {
+      vec2 uv = vUv, p = (uv - 0.5) * 2.0; p.x *= uRes.x / uRes.y;
+      float k = uAmt * smoothstep(0.22, 1.5, length(p));                                  // zoom blur: nothing at the centre, strongest at the edges
+      vec2 q = (p - vec2(0.0, -0.28)) / vec2(0.95, 0.6);                                   // the car sits low in the middle: keep it (and what is as near as it) sharp
+      float prot = (1.0 - smoothstep(0.7, 1.0, length(q))) * (1.0 - smoothstep(uCarD + 2.0, uCarD + 6.0, lin(texture2D(tDepth, uv).x)));
+      k *= 1.0 - prot;
+      vec3 c0 = texture2D(tIn, uv).rgb;
+      if (k < 0.002) { gl_FragColor = vec4(c0, 1.0); return; }
+      vec2 d = (uv - 0.5) * k * 0.12;
+      float j = fract(52.9829189 * fract(dot(gl_FragCoord.xy + uTime * 37.0, vec2(0.06711056, 0.00583715)))) - 0.5;
+      vec3 acc = c0; float n = 1.0;
+      for (int i = 1; i <= 12; i++) { if (float(i) > uTaps) break; acc += texture2D(tIn, uv - d * ((float(i) + j) / uTaps)).rgb; n += 1.0; }
+      gl_FragColor = vec4(acc / n, 1.0);
+    }`;
+
   class Post {
     constructor(renderer, q) {
       this.r = renderer; this.q = q;
@@ -2939,16 +2957,19 @@ self.onmessage = (e) => {
       this.composeMat = new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: COMPOSE, uniforms: this.U, depthTest: false, depthWrite: false });
       this.fxaaU = { tIn: { value: null }, uRes: this.U.uRes };
       this.fxaaMat = new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: FXAA, uniforms: this.fxaaU, depthTest: false, depthWrite: false });
+      this.mbU = { tIn: { value: null }, tDepth: { value: null }, uRes: this.U.uRes, uAmt: { value: 0 }, uCarD: { value: 0 }, uNear: { value: 0.3 }, uFar: { value: 6000 }, uTaps: { value: 9 }, uTime: { value: 0 } };
+      this.mbMat = new THREE.ShaderMaterial({ vertexShader: VS, fragmentShader: MBLUR, uniforms: this.mbU, depthTest: false, depthWrite: false });
       this.mesh = new THREE.Mesh(quad, this.composeMat); this.mesh.frustumCulled = false;
       this.scene = new THREE.Scene(); this.scene.add(this.mesh);
       this.tmp = new THREE.Vector3(); this.scale = 1; this.w = 0; this.h = 0;
     }
     resize(w, h, scale) {
       this.scale = scale || 1; this.w = Math.max(2, Math.floor(w * this.scale)); this.h = Math.max(2, Math.floor(h * this.scale));
-      if (this.rt) { this.rt.dispose(); this.rt.depthTexture.dispose(); this.ldr.dispose(); }
+      if (this.rt) { this.rt.dispose(); this.rt.depthTexture.dispose(); this.ldr.dispose(); this.ldr2.dispose(); }
       const dt = new THREE.DepthTexture(this.w, this.h); dt.type = THREE.UnsignedIntType; dt.format = THREE.DepthFormat;
       this.rt = new THREE.WebGLRenderTarget(this.w, this.h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, type: this.hdr ? THREE.HalfFloatType : THREE.UnsignedByteType, depthBuffer: true, depthTexture: dt, stencilBuffer: false });
       this.ldr = new THREE.WebGLRenderTarget(this.w, this.h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, depthBuffer: false });
+      this.ldr2 = new THREE.WebGLRenderTarget(this.w, this.h, { minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, format: THREE.RGBAFormat, depthBuffer: false });
       this.U.uRes.value.set(this.w, this.h);
     }
     lin(c, k) { return this.tmp.set(Math.pow(c.r, 2.2) * k, Math.pow(c.g, 2.2) * k, Math.pow(c.b, 2.2) * k).clone(); }
@@ -2986,7 +3007,12 @@ self.onmessage = (e) => {
       this.mesh.material = this.composeMat;
       r.setRenderTarget(this.ldr); r.render(this.scene, this.cam);
       if (window.WXS && window.WXS.visible) { const ac0 = r.autoClear; r.autoClear = false; r.render(window.WXS, camera); r.autoClear = ac0; }   // rain / snow on top of the graded picture
-      this.fxaaU.tIn.value = this.ldr.texture; this.mesh.material = this.fxaaMat;
+      let src = this.ldr.texture; const mb = window.__mbAmt || 0, taps = this.q.mb || 0;
+      if (mb > 0.004 && taps > 0) {   // motion blur: only while it is visible, so it costs nothing at low speed
+        const M = this.mbU; M.tIn.value = src; M.tDepth.value = this.rt.depthTexture; M.uAmt.value = mb; M.uCarD.value = window.__mbCarD || 0; M.uNear.value = camera.near; M.uFar.value = camera.far; M.uTaps.value = taps; M.uTime.value = time % 100;
+        this.mesh.material = this.mbMat; r.setRenderTarget(this.ldr2); r.render(this.scene, this.cam); src = this.ldr2.texture;
+      }
+      this.fxaaU.tIn.value = src; this.mesh.material = this.fxaaMat;
       r.setRenderTarget(null); r.render(this.scene, this.cam);
     }
   }
@@ -3005,9 +3031,9 @@ self.onmessage = (e) => {
   addEventListener('error', (e) => showErr('ERR ' + e.message + ' @' + (e.filename || '').split('/').pop() + ':' + e.lineno));
 
   const QUALITY = {
-    low:  { name: 'Low',    pr: 1.0,  scale: 0.8,  shadow: 1024, ao: 0.0,  god: 0.25, tilt: 0.2,  lodScale: 0.7,  radius: 8,  grass: 0.35 },
-    med:  { name: 'Medium', pr: 1.25, scale: 1.0,  shadow: 1536, ao: 0.45, god: 0.45, tilt: 0.3,  lodScale: 0.85, radius: 9,  grass: 0.65 },
-    high: { name: 'High',   pr: 1.75, scale: 1.0,  shadow: 2048, ao: 0.6,  god: 0.6,  tilt: 0.35, lodScale: 1.0,  radius: 10, grass: 1.0 },
+    low:  { name: 'Low',    pr: 1.0,  scale: 0.8,  shadow: 1024, ao: 0.0,  god: 0.25, tilt: 0.2,  mb: 6,  lodScale: 0.7,  radius: 8,  grass: 0.35 },
+    med:  { name: 'Medium', pr: 1.25, scale: 1.0,  shadow: 1536, ao: 0.45, god: 0.45, tilt: 0.3,  mb: 9,  lodScale: 0.85, radius: 9,  grass: 0.65 },
+    high: { name: 'High',   pr: 1.75, scale: 1.0,  shadow: 2048, ao: 0.6,  god: 0.6,  tilt: 0.35, mb: 12, lodScale: 1.0,  radius: 10, grass: 1.0 },
   };
   let qKey = 'med';
   try { const s = localStorage.getItem('er-quality'); if (QUALITY[s]) qKey = s; } catch (e) { }
@@ -4041,10 +4067,13 @@ self.onmessage = (e) => {
   }
   const hm = (t) => String(Math.floor(t)).padStart(2, '0') + ':' + String(Math.floor((t % 1) * 60)).padStart(2, '0');
   try { const v = parseFloat(localStorage.getItem('er-hlb')); if (v >= 0.2 && v <= 1.5) window.__hlB = v; } catch (e) { }
+  try { const v = parseFloat(localStorage.getItem('er-fovb')); if (v >= 0 && v <= 35) window.__fovBoost = v; const m = parseFloat(localStorage.getItem('er-mb')); if (m === 0 || m === 1 || m === 1.7) window.__mbLvl = m; } catch (e) { }
   head('Graphics');
   seg('Quality', [['low', 'Low'], ['med', 'Medium'], ['high', 'High']], () => qKey, (k) => applyQuality(k));
   slide('Draw distance', 0.5, 2.5, 0.1, () => dist, (v) => applyDist(v), (v) => v.toFixed(1) + '\u00d7');
   slide('Field of view', 50, 90, 1, () => window.__fov || 62, (v) => { window.__fov = v; }, (v) => v + '\u00b0');
+  slide('Speed FOV boost', 0, 35, 1, () => window.__fovBoost ?? 22, (v) => { window.__fovBoost = v; try { localStorage.setItem('er-fovb', String(v)); } catch (e) { } }, (v) => '+' + v + '\u00b0');
+  seg('Motion blur', [['0', 'Off'], ['1', 'Normal'], ['1.7', 'Strong']], () => String(window.__mbLvl ?? 1), (k) => { window.__mbLvl = +k; try { localStorage.setItem('er-mb', k); } catch (e) { } });
   head('World');
   slide('Time of day', 0, 24, 0.05, () => env.time, (v) => { env.time = v % 24; }, hm);
   seg('Time flow', [['0', 'Frozen'], ['0.005', 'Normal'], ['0.025', 'Fast']], () => String(env.timeSpeed), (k) => { env.timeSpeed = +k; });
@@ -4127,6 +4156,7 @@ self.onmessage = (e) => {
   }
 
   let lookBack = 0;   // 1 while Z (or the on-screen button) is held: look back
+  let curFov = 62, mbSm = 0;
   function placeCam() {
 
     const dt = car.dt;
@@ -4141,7 +4171,13 @@ self.onmessage = (e) => {
       const bk = lookBack ? -1 : 1, tx = car.x - sx * D * bk, tz = car.z - sz * D * bk; camY = Math.max(camY, gnd(tx, tz) + 0.8);
       camera.position.set(tx, camY, tz); look.set(car.x + sx * 8 * bk, car.y + 1.2, car.z + sz * 8 * bk); camera.lookAt(look);   // looking back: the camera sits in front of the car and faces it, with the road behind in view
     }
-    const fov = (window.__fov || 62) + Math.min(16, Math.abs(car.u) * 0.3); if (Math.abs(camera.fov - fov) > 0.2) { camera.fov = fov; camera.updateProjectionMatrix(); }
+    {   // speed: the view widens (smoothly) and a zoom blur builds toward the screen edges
+      const spd = Math.abs(car.u), sm = (a, b) => { const t = Math.min(1, Math.max(0, (spd - a) / (b - a))); return t * t * (3 - 2 * t); }, k = 1 - Math.exp(-Math.min(dt || 0, 0.1));
+      curFov += ((window.__fov || 62) + (window.__fovBoost ?? 22) * sm(8, 85) - curFov) * Math.min(1, k * 3.5);
+      if (Math.abs(camera.fov - curFov) > 0.05) { camera.fov = curFov; camera.updateProjectionMatrix(); }
+      mbSm += (sm(26, 82) - mbSm) * Math.min(1, k * 4); window.__mbAmt = mbSm * (window.__mbLvl ?? 1);
+      window.__mbCarD = cockpit ? 0 : Math.hypot(camera.position.x - car.x, camera.position.y - car.y, camera.position.z - car.z);
+    }
     camera.updateMatrixWorld(); camera.getWorldDirection(tmpV); const hl = Math.hypot(tmpV.x, tmpV.z) || 1;
     env.setHeading(tmpV.x / hl, tmpV.z / hl);
     focus.set(car.x + Math.sin(car.hd) * 16, car.y, car.z + Math.cos(car.hd) * 16);
