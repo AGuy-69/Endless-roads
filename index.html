@@ -2546,7 +2546,7 @@ self.onmessage = (e) => {
   class Environment {
     constructor(scene, camera, renderer, mats) {
       this.scene = scene; this.camera = camera; this.renderer = renderer; this.mats = mats;
-      this.time = 9.2; this.timeSpeed = 1 / 200;   // game hours per second
+      this.time = 7.25; this.timeSpeed = 1 / 200;   // game hours per second
       this.clock = 0; this.weatherName = 'clear'; this.fwd = new THREE.Vector2(0, -1); this.fwdT = new THREE.Vector2(0, -1); this.fwdInit = false;
       this.wx = Object.assign({}, WEATHER.clear); this.target = WEATHER.clear;
       this.sunDir = new THREE.Vector3(); this.zen = new THREE.Color(); this.hor = new THREE.Color(); this.sunCol = new THREE.Color();
@@ -3628,6 +3628,7 @@ self.onmessage = (e) => {
     engM4: [1, 2, 3, 4, 5, 6, 7].map((i) => 'assets/audio/engine_m4_' + i * 1000 + 'rpm.wav'),
     engG: [1, 2, 3, 4].map((i) => 'assets/audio/engine_gwagon_' + i * 1000 + 'rpm.wav'),
     squeal: 'assets/audio/tyre_squeal.wav',
+    rain: 'assets/audio/rain.mp3', thunder: 'assets/audio/lightning.mp3',
     cars: { zen: 'assets/models/car_zenvo.glb', ste: 'assets/models/car_sterrato.glb', art: 'assets/models/car_artura.glb', mer: 'assets/models/car_mercedes.glb', for: 'assets/models/car_ford.glb', fer: 'assets/models/car_ferrari.glb', lan: 'assets/models/car_landrover.glb',
       m8: 'assets/models/car_m8.glb', uru: 'assets/models/car_uru.glb', p1: 'assets/models/car_p1.glb', gtr: 'assets/models/car_gtr.glb', mus: 'assets/models/car_mus.glb', mb2: 'assets/models/car_mb2.glb', por: 'assets/models/car_por.glb' },
   };
@@ -3742,7 +3743,7 @@ self.onmessage = (e) => {
   const W_SUM = CAR_IDS.reduce((a, k) => a + CARSPEC[k].w, 0), W_MAX = Math.max(...CAR_IDS.map((k) => CARSPEC[k].w)), W_MIN = Math.min(...CAR_IDS.map((k) => CARSPEC[k].w));
   const pickCar = (r) => { let x = r() * W_SUM; for (const k of CAR_IDS) { x -= CARSPEC[k].w; if (x <= 0) return k; } return CAR_IDS[0]; };
   const rarity = (id) => Math.log(W_MAX / CARSPEC[id].w) / Math.log(W_MAX / W_MIN);   // 0 = most common car, 1 = rarest
-  const CARS = {}; let curCar = null, carWrap = null;
+  const CARS = {}; let curCar = null, carWrap = null, selWant = null;   // selWant = the car most recently asked for
   const ENGMAXR = { engG: 1.7 };                                  // highest pitch-up allowed for a set (G-Wagon loops stop at 4000 rpm but the engine revs to 6000)
   const ENGVOL = { eng: 1, engM4: 1 / 0.6, engG: 1 };                    // the M4 loops played at ~60% of the Porsche's loudness, so lift them by 100/60 to match
   let curEng = 'engG'; const engBank = {};
@@ -3900,8 +3901,11 @@ self.onmessage = (e) => {
     }, (e) => console.error('GLB', id, e)), () => { /* model file missing: reported by fetchAB; the built-in placeholder car stays */ });
   }
   function selectCar(id, quiet) {
-    if (!CARDEFS[id] || id === curCar) return;
+    if (!CARDEFS[id]) return;
+    selWant = id;   // the newest request always wins: a slower load of an earlier choice must not replace it, and asking for the car already on screen cancels a pending one
+    if (id === curCar) return;
     const go = (X) => {
+      if (selWant !== id) return;
       if (carWrap) carGroup.remove(carWrap); carWrap = X.wrap; carGroup.add(carWrap);
       applyProfile(id); curEng = engKeyFor(id); if (typeof ac !== 'undefined' && ac) loadEng(curEng); probeCustom(id); carMeshes = X.carMeshes; lightMats = X.lightMats; headMats = X.headMats; spinners = X.spinners; steerers = X.steerers; suspNodes = X.susp; WS = X.WS; WR = X.WR; SA = X.SA; EYE = X.EYE; curCar = id;
       body.visible = cabin.visible = false; for (const w of wheels) w.piv.visible = false;
@@ -3937,13 +3941,39 @@ self.onmessage = (e) => {
     if (ac) { if (ac.state === 'suspended' && GS.mode === 'play') ac.resume(); return; }
     ac = new (window.AudioContext || window.webkitAudioContext)(); mgain = ac.createGain(); mgain.gain.value = window.__engVol ?? 0.7;
     const lim = limNode = ac.createDynamicsCompressor(); lim.threshold.value = -3; lim.knee.value = 0; lim.ratio.value = 20; lim.attack.value = 0.003; lim.release.value = 0.12; mgain.connect(lim); lim.connect(ac.destination);   // safety limiter: the louder M4 must not clip
-    loadEng(curEng); wind = mkWind(ac, mgain);
+    loadEng(curEng); wind = mkWind(ac, mgain); loadWxAudio();
     fetchAB(AF.squeal).then((ab) => ac.decodeAudioData(ab.slice(0), (buf) => {   // tyre squeal loop, played while any tyre is past its grip limit
       const src = ac.createBufferSource(), g = ac.createGain(); src.buffer = buf; src.loop = true; g.gain.value = 0; src.connect(g); g.connect(ac.destination); src.start(); sq = { src, g };
     }), () => { /* squeal file missing: reported by fetchAB, no tyre noise */ });
   }
   ['keydown', 'pointerdown', 'touchstart'].forEach((ev) => addEventListener(ev, initAudio));
   addEventListener('keydown', (e) => { if (e.key === 'n' || e.key === 'N') { muted = !muted; toast(muted ? 'Engine sound off' : 'Engine sound on'); } });
+  // ---- rain loop + thunder. rain.mp3 loops and its volume follows the rain amount (WXF.rain, 0..1). lightning.mp3 has about 8 s of near-silence before the crack, so the lead-in is found at load
+  // (the first moment that gets near the file's peak) and skipped. Thunder trails the lightning flash by a slight random delay, and varies a little in loudness and pitch. Volumes: window.__rainVol (0.6), window.__thunderVol (0.9).
+  let rainG = null, rainLvl = 0, thunBuf = null, thunFrom = 8.6;
+  function loadWxAudio() {
+    fetchAB(AF.rain).then((ab) => ac.decodeAudioData(ab.slice(0), (buf) => {
+      const src = ac.createBufferSource(), g = ac.createGain(); src.buffer = buf; src.loop = true; g.gain.value = 0; src.connect(g); g.connect(ac.destination); src.start(0, Math.random() * buf.duration); rainG = g;   // random start point, so every storm doesn't begin the same
+    }), () => { /* rain file missing: reported by fetchAB, no rain sound */ });
+    fetchAB(AF.thunder).then((ab) => ac.decodeAudioData(ab.slice(0), (buf) => {
+      const d = buf.getChannelData(0), w = 512, n = Math.floor(d.length / w), r = new Float32Array(n); let pk = 0;
+      for (let i = 0; i < n; i++) { let q = 0; for (let j = 0; j < w; j++) { const x = d[i * w + j]; q += x * x; } r[i] = Math.sqrt(q / w); if (r[i] > pk) pk = r[i]; }
+      const k = r.findIndex((v) => v > pk * 0.12);   // first window near the peak = the crack; the hiss before it sits far below
+      thunFrom = k > 0 ? Math.max(0, k * w / buf.sampleRate - 0.12) : 8.6; thunBuf = buf;
+    }), () => { /* thunder file missing: reported by fetchAB, no thunder sound */ });
+  }
+  function rainStep(dt) {
+    const t = muted ? 0 : Math.min(1, (window.WXF && window.WXF.rain) || 0);
+    rainLvl += (t - rainLvl) * Math.min(1, dt * 1.5); rainG.gain.setTargetAtTime(rainLvl * (window.__rainVol ?? 0.6), ac.currentTime, 0.1);
+  }
+  function thunder() {
+    if (!ac || !thunBuf || muted) return;
+    const wait = 0.25 + Math.random() * 1.15, g = ac.createGain(), src = ac.createBufferSource();   // slight random gap after the flash
+    src.buffer = thunBuf; src.playbackRate.value = 0.94 + Math.random() * 0.12;
+    g.gain.value = (window.__thunderVol ?? 0.9) * (0.55 + 0.45 * (1 - (wait - 0.25) / 1.15));   // a shorter gap = a closer strike = louder
+    src.connect(g); g.connect(ac.destination); src.start(ac.currentTime + wait, thunFrom);
+  }
+  if (window.WXF) window.WXF.onThunder = () => thunder();
   function engineAudio(dt) {
     if (!ac) return;
     eRpm += ((EV ? car.rpm : Math.max(900, car.rpm)) - eRpm) * Math.min(1, dt * (car.shiftT > 0 ? 6 : 10));
@@ -3962,6 +3992,7 @@ self.onmessage = (e) => {
       }
     }
     if (wind) windStep(wind, Math.abs(car.u), muted ? 0 : 1);   // wind: all cars, speed only
+    if (rainG) rainStep(dt);
     if (sq) {   // squeal: same slip measure as the tyre marks (front/rear slip angle past grip peak, locked, spinning, handbrake)
       const au = Math.abs(car.u), sg = car.u < 0 ? -1 : 1;
       const sF = Math.abs(Math.atan2(car.v + CGA * car.r, Math.max(au, 1.5)) - sg * car.steer), sR = Math.abs(Math.atan2(car.v - CGB * car.r, Math.max(au, 1.5)));
@@ -5013,7 +5044,7 @@ self.onmessage = (e) => {
   const GS = { mode: 'menu', page: 'home', started: false, orb: 0, sel: null, lastTile: null, want: null, cap: null, capReq: null };
   const mel = (tag, cls, html) => { const e = document.createElement(tag); if (cls) e.className = cls; if (html != null) e.innerHTML = html; return e; };
   const hmClock = () => { const h = Math.floor(env.time), m = Math.floor((env.time % 1) * 60); return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0'); };
-  const carId = () => { let s = GS.want || curCar; if (!s) { try { s = localStorage.getItem('er_car'); } catch (e) { /* storage blocked */ } } return CARDEFS[s] ? s : 'fer'; };
+  const carId = () => { let s = selWant || curCar; if (!s) { try { s = localStorage.getItem('er_car'); } catch (e) { /* storage blocked */ } } return CARDEFS[s] ? s : 'fer'; };
   const lin2css = (c) => 'rgb(' + c.map((v) => Math.round(255 * Math.pow(Math.min(1, v), 1 / 2.2))).join(',') + ')';
 
   const hmEl = mel('div', 'hm'), pz = mel('div', 'hm');
@@ -5113,8 +5144,8 @@ self.onmessage = (e) => {
     const pend = { wi: near(WIND, W0.wind), hi: near(HILL, W0.hill) }, wxl = Object.keys(Environment.WEATHER), TT = [['Morning', 7.5], ['Noon', 12.5], ['Evening', 18.5], ['Night', 22]];
     const row = (label, opts, get, set) => {
       const bt = mel('button', 'hm-btn gr-r', '<span class="gr-l"></span><span class="gr-v"><i class="gr-a" data-d="-1">‹</i><b></b><i class="gr-a" data-d="1">›</i></span>'); bt.type = 'button'; bt.tabIndex = -1;
-      bt.querySelector('.gr-l').textContent = label; const val = bt.querySelector('b'), paint = () => { val.textContent = opts()[get()]; };
-      bt._step = (d) => { const o = opts(); set(((get() + d) % o.length + o.length) % o.length); paint(); };
+      bt.querySelector('.gr-l').textContent = label; const val = bt.querySelector('b'); let shown = get(); const paint = () => { shown = get(); val.textContent = opts()[shown]; };
+      bt._step = (d) => { const o = opts(); set(((shown + d) % o.length + o.length) % o.length); paint(); };   // step from the value on screen, not the live one (the clock keeps running, so the nearest preset can change between paints)
       bt.addEventListener('click', (e) => { const a = e.target.closest('.gr-a'); bt._step(a ? +a.dataset.d : 1); setSel(bt); });
       bt.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') setSel(bt); }); bt.addEventListener('mousedown', (e) => e.preventDefault());
       paint(); b.append(bt); return bt;
@@ -5122,7 +5153,8 @@ self.onmessage = (e) => {
     const btn = (txt, fn) => { const g = mel('button', 'hm-btn gr-go', txt); g.type = 'button'; g.tabIndex = -1; g.onclick = fn; g.addEventListener('pointerenter', (e) => { if (e.pointerType === 'mouse') setSel(g); }); g.addEventListener('mousedown', (e) => e.preventDefault()); b.append(g); return g; };
     const head = (t, sub) => b.append(mel('p', 'wp-h', '<b>' + t + '</b><small>' + sub + '</small>'));
     head('Changes instantly', 'No restart needed: pick a value and it happens right now.');
-    row('Time of day', () => TT.map((t) => t[0]), () => { const h = env.time % 24; return TT.reduce((bi, t, i) => (Math.abs(t[1] - h) < Math.abs(TT[bi][1] - h) ? i : bi), 0); }, (i) => { env.time = TT[i][1]; env.apply(0); });
+    // Time of day buckets: Night 20:30-05:00 (3), Morning 05:00-10:00 (0), Noon 10:00-16:00 (1), Evening 16:00-20:30 (2)
+    row('Time of day', () => TT.map((t) => t[0]), () => { const h = env.time % 24; return h < 5 || h >= 20.5 ? 3 : h < 10 ? 0 : h < 16 ? 1 : 2; }, (i) => { env.time = TT[i][1]; env.apply(0); });
     row('Weather', () => wxl.map((k) => k[0].toUpperCase() + k.slice(1)), () => Math.max(0, wxl.indexOf(env.weatherName)), (i) => env.setWeather(wxl[i]));
     head('Needs a restart', 'The road and terrain are built from these. Change them, then restart to see the new world.');
     let applyBtn = null;
