@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 96" fill="none">
+  <!-- road edges converging to the horizon -->
+  <polygon points="6,92 21,92 55,8 46,8" fill="#fff"/>
+  <polygon points="100,92 85,92 65,8 74,8" fill="#fff"/>
+  <!-- centre dashes -->
+  <g fill="#fff" fill-opacity=".85"><polygon points="58,14 62,14 63,26 57,26"/><polygon points="56,34 64,34 66,52 54,52"/><polygon points="52,62 68,62 72,86 48,86"/></g>
+  <!-- accent slash -->
+  <polygon points="94,92 106,92 118,38 108,38" fill="#f2c879"/>
+</svg>
