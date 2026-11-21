@@ -31,11 +31,56 @@ body.ready #hud{opacity:1}
 #nofile p{margin:8px auto;max-width:520px;color:var(--dim);font:400 14px/1.6 'DM Mono',monospace}
 #nofile code{color:var(--accent)}
 html.nofile #nofile{display:grid}html.nofile #load{display:none}
-#gauge{position:fixed;right:max(20px,env(safe-area-inset-right,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));width:220px;height:220px;filter:drop-shadow(0 2px 10px rgba(0,0,0,.5))}
-#gauge svg{width:100%;height:100%;font-family:Outfit,sans-serif;font-weight:300}
-.hud-b{top:calc(16px + env(safe-area-inset-top,0px));bottom:auto;justify-content:flex-start}.meta{text-align:left}
+#gauge{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));width:260px;height:260px;filter:drop-shadow(0 2px 10px rgba(0,0,0,.55))}
+#gauge svg{width:100%;height:100%;font-family:Outfit,sans-serif;font-variant-numeric:tabular-nums}
+.hud-b{top:calc(16px + env(safe-area-inset-top,0px));left:calc(100px + env(safe-area-inset-left,0px));bottom:auto;justify-content:flex-start}.meta{text-align:left}
 #tc-wrap{display:none}
-@media (pointer:coarse){#tc-wrap{display:block}#gauge{bottom:calc(176px + env(safe-area-inset-bottom,0px));width:150px;height:150px}}
+
+/* ── Phone HUD: speed + gear in the middle, RPM to its right, free-standing (no panel) so the thumbs own both sides ── */
+#m-hud{display:none;position:fixed;z-index:5;pointer-events:none;color:#fff;font-family:Outfit,sans-serif;text-shadow:0 1px 8px rgba(0,0,0,.65);
+  left:calc(176px + env(safe-area-inset-left,0px));right:calc(176px + env(safe-area-inset-right,0px));
+  bottom:calc(10px + env(safe-area-inset-bottom,0px));height:100px}
+#m-hud::before{content:'';position:absolute;left:-24px;right:-24px;top:-14px;bottom:-10px;z-index:-1;background:radial-gradient(ellipse at 50% 62%,rgba(6,8,12,.55),rgba(6,8,12,0) 72%)}
+#m-c{position:absolute;left:50%;bottom:0;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center}
+#m-spd{font-size:56px;font-weight:600;line-height:1;font-variant-numeric:tabular-nums}
+#m-row{display:flex;align-items:center;gap:8px;margin-top:6px}
+#m-gear{min-width:26px;padding:0 6px;box-sizing:border-box;height:22px;border-radius:5px;background:#fff;color:#0b0f14;font:700 15px/22px Outfit,sans-serif;text-align:center;text-shadow:none}
+#m-unit{font-size:10px;font-weight:500;letter-spacing:.14em;color:rgba(255,255,255,.6)}
+#m-r{position:absolute;right:0;bottom:0;width:104px}
+#m-rpm-top{display:flex;justify-content:space-between;align-items:baseline}
+#m-rpm-label{font-size:9px;font-weight:500;letter-spacing:.14em;color:rgba(255,255,255,.55)}
+#m-rpm-val{font-size:16px;font-weight:600;font-variant-numeric:tabular-nums}
+#m-rpm-bar{display:flex;gap:3px;height:30px;margin-top:6px}
+#m-rpm-bar span{flex:1;border-radius:2px;background:rgba(255,255,255,.2)}
+#m-rpm-bar span.on{background:#fff}
+#m-rpm-bar span.z{background:rgba(255,74,58,.4)}
+#m-rpm-bar span.red{background:#ff4a3a}
+#m-odo{margin-top:6px;font-size:9px;letter-spacing:.08em;color:rgba(255,255,255,.5)}
+/* minimap: top-right under the draw-distance pill in landscape (the side columns belong to the controls) */
+#mm-m{position:fixed;top:calc(52px + env(safe-area-inset-top,0px));right:max(16px,env(safe-area-inset-right,0px));width:92px;height:92px;border-radius:50%;border:1px solid rgba(255,255,255,.25);background:rgba(8,12,16,.3);box-shadow:0 2px 10px rgba(0,0,0,.5)}
+
+@media (pointer:coarse){
+  #tc-wrap{display:block}
+  #gauge{display:none}
+  #mm{display:none}
+  #m-hud{display:block}
+  body #aid{right:auto;left:50%;transform:translateX(-50%);bottom:calc(114px + env(safe-area-inset-bottom,0px))}   /* centred just above the HUD, clear of both thumb zones */
+  body #st{max-height:calc(100% - 270px - env(safe-area-inset-top,0px))}
+  .hud-b{left:max(16px,env(safe-area-inset-left,0px));justify-content:flex-end}.meta{text-align:right}   /* clock top-right: the draw-distance pill lives in settings, so that corner is free */
+  body #rgrid{top:calc(146px + env(safe-area-inset-top,0px))}   /* below the race panel instead of under it */
+  #mm-m{top:calc(62px + env(safe-area-inset-top,0px))}
+}
+/* portrait: not enough width for controls beside the HUD, so they stack above it; the minimap joins the HUD row */
+@media (pointer:coarse) and (max-aspect-ratio:1/1){
+  #m-hud{left:calc(16px + env(safe-area-inset-left,0px));right:calc(16px + env(safe-area-inset-right,0px));display:flex;justify-content:space-between;align-items:flex-end}
+  #mm-m{position:static;flex:none}
+  #m-c,#m-r{position:static;transform:none}
+  #m-r{flex:none}
+  body #rprompt{bottom:calc(218px + env(safe-area-inset-bottom,0px))}
+  body #toast{top:calc(58px + env(safe-area-inset-top,0px))}   /* own row below the buttons and the clock */
+  body #race{top:calc(104px + env(safe-area-inset-top,0px))}
+  body #rgrid{top:calc(184px + env(safe-area-inset-top,0px))}
+}
 </style>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500&family=Barlow:ital,wght@0,500;0,600;0,700;0,800;1,800&display=swap">
 <link rel="stylesheet" href="assets/ui/menu.css">
@@ -50,7 +95,18 @@ html.nofile #nofile{display:grid}html.nofile #load{display:none}
       <div id="gauge"></div>
       <div class="meta"><div id="clock">09:00 · Clear</div><div id="dist"></div></div>
     </div>
-  </div>
+    <div id="m-hud">
+      <canvas id="mm-m" width="130" height="130"></canvas>
+      <div id="m-c">
+        <div id="m-spd">0</div>
+        <div id="m-row"><div id="m-gear">1</div><div id="m-unit">KM/H</div></div>
+      </div>
+      <div id="m-r">
+        <div id="m-rpm-top"><span id="m-rpm-label">RPM</span><span id="m-rpm-val">0</span></div>
+        <div id="m-rpm-bar"></div>
+        <div id="m-odo">ODO 0.0 km</div>
+      </div>
+    </div>
   <div id="load"><div><h1>Endless Road</h1><p id="loadmsg">Shaping the land</p><p id="loadwarn"></p><p style="margin-top:26px;font-size:10px;opacity:.5">Car models: “Ultimate Low-Poly Car Pack” by ProbablyNotG · CC BY 4.0</p><div class="bar"><i id="loadbar"></i></div></div></div>
   <div id="nofile"><div><h2>Endless Road</h2><p>This game loads its sounds and car models from the <code>assets</code> folder, and browsers do not allow that when a page is opened by double-clicking it.</p><p>Run <code>serve.bat</code> (Windows) or <code>serve.sh</code> (Mac / Linux) in this folder. It starts a small local server and opens the game in your browser.</p><p style="font-size:12px;opacity:.7">No script? Open a terminal here and run <code>python -m http.server 8000</code>, then visit <code>http://localhost:8000/</code>.</p></div></div>
 </div>
@@ -3320,16 +3376,22 @@ self.onmessage = (e) => {
     }
     .tc-btn.active { background: rgba(255,255,255,0.32); }
 
-    /* LEFT ZONE — steering pair, bottom-left */
-    #tc-left  { left: calc(20px + env(safe-area-inset-left,0px));  bottom: calc(20px + env(safe-area-inset-bottom,0px)); }
-    #tc-right { left: calc(96px + env(safe-area-inset-left,0px));  bottom: calc(20px + env(safe-area-inset-bottom,0px)); }
-
-    /* RIGHT ZONE — pedals stacked vertically, bottom-right */
-    #tc-gas   { right: calc(20px + env(safe-area-inset-right,0px)); bottom: calc(96px + env(safe-area-inset-bottom,0px)); }
-    #tc-brake { right: calc(20px + env(safe-area-inset-right,0px)); bottom: calc(20px  + env(safe-area-inset-bottom,0px)); }
-
-    /* Look-back — above the left steering pair, centred between the two buttons */
-    #tc-back  { left: calc(58px + env(safe-area-inset-left,0px));  bottom: calc(96px + env(safe-area-inset-bottom,0px)); }
+    /* landscape: steering pair bottom-left, pedals bottom-right, the speed / RPM cluster sits centred between them (176px each side) */
+    #tc-left  { left: calc(20px + env(safe-area-inset-left,0px));  bottom: calc(16px + env(safe-area-inset-bottom,0px)); }
+    #tc-right { left: calc(96px + env(safe-area-inset-left,0px));  bottom: calc(16px + env(safe-area-inset-bottom,0px)); }
+    #tc-brake { right: calc(96px + env(safe-area-inset-right,0px)); bottom: calc(16px + env(safe-area-inset-bottom,0px)); }
+    #tc-gas   { right: calc(20px + env(safe-area-inset-right,0px)); bottom: calc(16px + env(safe-area-inset-bottom,0px)); }
+    /* look-back: above the pedals (the left column is kept free for the race grid) */
+    #tc-back  { right: calc(58px + env(safe-area-inset-right,0px)); bottom: calc(92px + env(safe-area-inset-bottom,0px)); }
+    /* portrait: one row above the HUD, steering left, look-back in the middle, pedals right */
+    @media (max-aspect-ratio:1/1) {
+      .tc-btn { width:58px; height:58px; line-height:58px; }
+      #tc-left  { left: calc(16px + env(safe-area-inset-left,0px));  bottom: calc(146px + env(safe-area-inset-bottom,0px)); }
+      #tc-right { left: calc(82px + env(safe-area-inset-left,0px));  bottom: calc(146px + env(safe-area-inset-bottom,0px)); }
+      #tc-brake { right: calc(82px + env(safe-area-inset-right,0px)); bottom: calc(146px + env(safe-area-inset-bottom,0px)); }
+      #tc-gas   { right: calc(16px + env(safe-area-inset-right,0px)); bottom: calc(146px + env(safe-area-inset-bottom,0px)); }
+      #tc-back  { left: 50%; right: auto; margin-left: -24px; width:48px; height:48px; line-height:48px; font-size:22px; bottom: calc(154px + env(safe-area-inset-bottom,0px)); }
+    }
   `;
   document.head.appendChild(tcStyle);
 
@@ -3465,23 +3527,32 @@ self.onmessage = (e) => {
 
   // ===== Minimap (heading-up, road ahead highlighted) =====
   const mmSt = document.createElement('style');
-  mmSt.textContent = '#mm{position:fixed;left:max(20px,env(safe-area-inset-left,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));width:170px;height:170px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(8,12,16,.35);box-shadow:0 2px 10px rgba(0,0,0,.5)}@media (pointer:coarse){#mm{bottom:calc(176px + env(safe-area-inset-bottom,0px));width:120px;height:120px}}';
+  mmSt.textContent = '#mm{position:fixed;left:max(16px,env(safe-area-inset-left,0px));bottom:calc(12px + env(safe-area-inset-bottom,0px));width:170px;height:170px;border-radius:50%;border:1px solid rgba(255,255,255,.22);background:rgba(8,12,16,.3);box-shadow:0 2px 10px rgba(0,0,0,.5)}';
   document.head.appendChild(mmSt);
   const mm = document.createElement('canvas'); mm.id = 'mm'; mm.width = mm.height = 340; $('hud').appendChild(mm);
   const mx = mm.getContext('2d');
-  function drawMap() {
-    const au = Math.abs(car.u), sc = 1.1 - Math.min(0.6, au * 0.012), sn = Math.sin(car.hd), cs = Math.cos(car.hd), C = 170, ic = car.s / road.step | 0;
-    mx.clearRect(0, 0, 340, 340); 
-    mx.strokeStyle = 'rgba(255,255,255,.12)'; mx.lineWidth = 1; for (const r of [60, 120]) { mx.beginPath(); mx.arc(C, C, r, 0, 6.283); mx.stroke(); }
+  function drawMapCtx(ctx, C) {
+    const au = Math.abs(car.u), sc = 1.1 - Math.min(0.6, au * 0.012), sn = Math.sin(car.hd), cs = Math.cos(car.hd), ic = car.s / road.step | 0;
+    const S = C * 2;
+    ctx.clearRect(0, 0, S, S);
+    ctx.strokeStyle = 'rgba(255,255,255,.12)'; ctx.lineWidth = 1;
+    for (const r of [C * 0.35, C * 0.71]) { ctx.beginPath(); ctx.arc(C, C, r, 0, 6.283); ctx.stroke(); }
     const i0 = Math.max(0, ic - 60), i1 = Math.min(road.fin - 1, ic + 160);
     const pt = (i) => { const dx = road.X[i] - car.x, dz = road.Z[i] - car.z; return [C - (dx * cs - dz * sn) * sc, C - (dx * sn + dz * cs) * sc]; };
-    const trace = (a, b) => { mx.beginPath(); for (let i = a; i <= b; i += 2) { const p = pt(i); i === a ? mx.moveTo(p[0], p[1]) : mx.lineTo(p[0], p[1]); } mx.stroke(); };
-    mx.lineCap = mx.lineJoin = 'round';
-    mx.strokeStyle = 'rgba(0,0,0,.3)'; mx.lineWidth = 6; trace(i0, i1);
-    mx.strokeStyle = 'rgba(255,255,255,.6)'; mx.lineWidth = 3; trace(i0, i1);
-    mx.strokeStyle = '#f2c879'; mx.lineWidth = 4; trace(Math.max(i0, ic), i1);
+    const trace = (a, b) => { ctx.beginPath(); for (let i = a; i <= b; i += 2) { const p = pt(i); i === a ? ctx.moveTo(p[0], p[1]) : ctx.lineTo(p[0], p[1]); } ctx.stroke(); };
+    ctx.lineCap = ctx.lineJoin = 'round';
+    ctx.strokeStyle = 'rgba(0,0,0,.3)'; ctx.lineWidth = 6 * C / 170; trace(i0, i1);
+    ctx.strokeStyle = 'rgba(255,255,255,.6)'; ctx.lineWidth = 3 * C / 170; trace(i0, i1);
+    ctx.strokeStyle = '#f2c879'; ctx.lineWidth = 4 * C / 170; trace(Math.max(i0, ic), i1);
     raceMap((x, z) => { const dx = x - car.x, dz = z - car.z; return [C - (dx * cs - dz * sn) * sc, C - (dx * sn + dz * cs) * sc]; });
-    mx.fillStyle = '#f2c879'; mx.strokeStyle = 'rgba(0,0,0,0)'; mx.lineWidth = 1; mx.beginPath(); mx.moveTo(C, C - 13); mx.lineTo(C + 9, C + 10); mx.lineTo(C, C + 5); mx.lineTo(C - 9, C + 10); mx.closePath(); mx.fill(); mx.stroke();
+    const a = 13 * C / 170, b = 9 * C / 170, c2 = 5 * C / 170;
+    ctx.fillStyle = '#f2c879'; ctx.strokeStyle = 'rgba(0,0,0,0)'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(C, C - a); ctx.lineTo(C + b, C + b); ctx.lineTo(C, C + c2); ctx.lineTo(C - b, C + b); ctx.closePath(); ctx.fill(); ctx.stroke();
+  }
+  function drawMap() {
+    drawMapCtx(mx, 170);
+    const mmM = $('mm-m');
+    if (mmM) { const mxM = mmM.getContext('2d'); drawMapCtx(mxM, 65); }
   }
 
   // ===== Free rigid body: flips, barrel rolls, tumbling. A 3D body (quaternion) on sixteen contact points (tyres roll, bodywork scrapes), gravity, buoyancy and water drag.
@@ -3684,24 +3755,34 @@ self.onmessage = (e) => {
 
   // ===== Forza-style HUD: rev arc, gear, speed =====
   let mph = false, gear = 1, rpmS = 900, RED = 7000, GMAX = 8000;   // tach: redline and dial range of the current car
-  const GM = [0, 13, 23, 33, 43, 53, 64], P = (deg, r) => [110 + r * Math.cos(deg * Math.PI / 180), 110 + r * Math.sin(deg * Math.PI / 180)];
+  const P = (deg, r) => [130 + r * Math.cos(deg * Math.PI / 180), 130 + r * Math.sin(deg * Math.PI / 180)];
   function buildGauge() {
-    let t = '<circle cx="110" cy="110" r="106" fill="rgba(8,12,16,.35)" stroke="rgba(255,255,255,.3)" stroke-width="1"/>';
-    const nT = GMAX / 1000, step = 270 / nT;
+    // open 270-degree dial: numerals outside a thick rev arc, speed / gear / odometer in the middle
+    const R = 92, nT = GMAX / 1000, step = 270 / nT;
+    let t = '<circle cx="130" cy="130" r="124" fill="rgba(8,12,16,.2)"/>';
     for (let i = 0; i <= nT; i++) {
-      const a = 135 + i * step, p1 = P(a, 78), p2 = P(a, 88), p3 = P(a, 66), col = i * 1000 >= RED - 499 && i * 1000 > RED - 1000 ? '#ff4a3a' : '#fff';
-      t += `<line x1="${p1[0]}" y1="${p1[1]}" x2="${p2[0]}" y2="${p2[1]}" stroke="${col}" stroke-width="1.25"/><text x="${p3[0]}" y="${p3[1] + 4}" text-anchor="middle" fill="${col}" font-size="11">${nT > 10 && i % 2 ? '' : i}</text>`;
+      const p = P(135 + i * step, 113), col = i * 1000 >= RED - 499 && i * 1000 > RED - 1000 ? '#ff4a3a' : 'rgba(255,255,255,.8)';
+      t += `<text x="${p[0]}" y="${p[1] + 4}" text-anchor="middle" fill="${col}" font-size="12">${nT > 10 && i % 2 ? '' : i}</text>`;
     }
-    { const ra = P(135 + 270 * RED / GMAX, 96), rb = P(405, 96); t += `<path d="M${ra[0]} ${ra[1]} A96 96 0 0 1 ${rb[0]} ${rb[1]}" fill="none" stroke="#ff4a3a" stroke-width="4"/>`; }   // red zone from the real redline to the end of the dial
-    const s = P(135, 96), e = P(45, 96), d = `M${s[0]} ${s[1]} A96 96 0 1 1 ${e[0]} ${e[1]}`;
-    t += `<path d="${d}" fill="none" stroke="rgba(255,255,255,.18)" stroke-width="1.5" pathLength="100"/><path id="g-fill" d="${d}" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/>`;
-    t += '<g id="g-n"><line x1="88" y1="0" x2="101" y2="0" stroke="#f2c879" stroke-width="2" stroke-linecap="round"/></g>';
-    t += '<text id="g-gear" x="110" y="112" text-anchor="middle" fill="#fff" font-size="60" font-weight="300">1</text>';
-    t += '<text id="g-spd" x="110" y="150" text-anchor="middle" fill="#fff" font-size="28" font-weight="300">0</text>';
-    t += '<text id="g-unit" x="110" y="166" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="10" letter-spacing="2">KM/H</text>';
-    $('gauge').innerHTML = '<span id="spd" hidden></span><svg viewBox="0 0 220 220">' + t + '</svg>';
+    const s0 = P(135, R), e0 = P(45, R), d = `M${s0[0]} ${s0[1]} A${R} ${R} 0 1 1 ${e0[0]} ${e0[1]}`, ra = P(135 + 270 * RED / GMAX, R);
+    t += `<path d="${d}" fill="none" stroke="rgba(255,255,255,.22)" stroke-width="2" pathLength="100"/>`;
+    t += `<path d="M${ra[0]} ${ra[1]} A${R} ${R} 0 0 1 ${e0[0]} ${e0[1]}" fill="none" stroke="#ff4a3a" stroke-opacity=".55" stroke-width="9"/>`;   // red zone from the real redline to the end of the dial
+    t += `<path id="g-fill" d="${d}" fill="none" stroke="#fff" stroke-width="9" pathLength="100" stroke-dasharray="100" stroke-dashoffset="100"/>`;
+    t += '<g id="g-n"><line x1="86" y1="0" x2="100" y2="0" stroke="#f2c879" stroke-width="3" stroke-linecap="round"/></g>';
+    t += '<text x="130" y="98" text-anchor="middle" fill="rgba(255,255,255,.55)" font-size="8" letter-spacing="1.5">RPM ×1000</text>';
+    t += '<text id="g-spd" x="130" y="150" text-anchor="middle" fill="#fff" font-size="56" font-weight="600">0</text>';
+    t += '<text id="g-unit" x="130" y="166" text-anchor="middle" fill="rgba(255,255,255,.65)" font-size="10" letter-spacing="2">KM/H</text>';
+    t += '<rect id="g-gb" x="114" y="176" width="32" height="22" rx="5" fill="#fff"/><text id="g-gear" x="130" y="192" text-anchor="middle" fill="#0b0f14" font-size="16" font-weight="700">1</text>';
+    t += '<text id="g-odo" x="130" y="230" text-anchor="middle" fill="rgba(255,255,255,.5)" font-size="9" letter-spacing="1">ODO 0.0 km</text>';
+    $('gauge').innerHTML = '<span id="spd" hidden></span><svg viewBox="0 0 260 260">' + t + '</svg>';
   }
   buildGauge();
+
+  // ── Phone HUD init ────────────────────────────────────────────────────
+  let mOdo = 0;   // odometer in km
+  const mRpmBar = $('m-rpm-bar'), RPM_SEGS = 14, mqCoarse = matchMedia('(pointer:coarse)');
+  for (let i = 0; i < RPM_SEGS; i++) mRpmBar.appendChild(document.createElement('span'));
+
   addEventListener('keydown', (e) => { if (e.key === 'u' || e.key === 'U') { mph = !mph; toast(mph ? 'Units: MPH' : 'Units: KM/H'); } });
   function updateHud(dt) {
     const au = Math.abs(car.u);
@@ -3710,10 +3791,23 @@ self.onmessage = (e) => {
     
     rpmS += (rpm - rpmS) * Math.min(1, dt * 12);
     const f = Math.min(1, rpmS / GMAX), red = rpmS > RED - 150;   // red zone starts at each car's real redline
+    const spd = Math.round(au * (mph ? 2.237 : 3.6)), gt = car.u < -0.5 ? 'R' : gear, un = mph ? 'MPH' : 'KM/H';
+    mOdo += au * dt / 1000;
+    const odo = 'ODO ' + (mph ? (mOdo * 0.6214).toFixed(1) + ' mi' : mOdo.toFixed(1) + ' km');
     const fill = $('g-fill'); fill.setAttribute('stroke-dashoffset', 100 * (1 - f)); fill.setAttribute('stroke', red ? '#ff4a3a' : '#fff');
-    $('g-n').setAttribute('transform', `translate(110 110) rotate(${135 + f * 270})`);
-    $('g-gear').textContent = car.u < -0.5 ? 'R' : gear; $('g-gear').setAttribute('fill', red ? '#ff4a3a' : '#fff');
-    $('g-spd').textContent = Math.round(au * (mph ? 2.237 : 3.6)); $('g-unit').textContent = mph ? 'MPH' : 'KM/H'; drawMap(); engineAudio(dt); trafficAudio(dt); carFx();
+    $('g-n').setAttribute('transform', `translate(130 130) rotate(${135 + f * 270})`);
+    $('g-gear').textContent = gt; $('g-gear').setAttribute('fill', red ? '#fff' : '#0b0f14'); $('g-gb').setAttribute('fill', red ? '#ff4a3a' : '#fff');
+    $('g-spd').textContent = spd; $('g-unit').textContent = un; $('g-odo').textContent = odo;
+
+    if (mqCoarse.matches) {   // phone HUD
+      $('m-spd').textContent = spd; $('m-unit').textContent = un; $('m-odo').textContent = odo;
+      $('m-gear').textContent = gt; $('m-gear').style.background = red ? '#ff4a3a' : ''; $('m-gear').style.color = red ? '#fff' : '';
+      const lit = Math.round(f * RPM_SEGS), zone = Math.floor(RPM_SEGS * RED / GMAX), segs = mRpmBar.children;
+      for (let i = 0; i < RPM_SEGS; i++) segs[i].className = i < lit ? (i >= zone ? 'red' : 'on') : (i >= zone ? 'z' : '');
+      $('m-rpm-val').textContent = Math.round(rpmS / 50) * 50; $('m-rpm-val').style.color = red ? '#ff4a3a' : '';
+    }
+
+    drawMap(); engineAudio(dt); trafficAudio(dt); carFx();
   }
 
   // ===== Porsche 911 (930): glossy clearcoat paint, sun shadows, steering + spinning wheels =====
@@ -4117,7 +4211,7 @@ self.onmessage = (e) => {
 .st-seg button.on{border-color:#f2c879;color:#f2c879}
 #st input[type=range]{width:130px;accent-color:#f2c879}
 .st-sw{width:20px;height:20px;border-radius:50%;border:1px solid rgba(255,255,255,.35);padding:0;cursor:pointer}.st-sw.on{outline:1px solid #f2c879;outline-offset:2px}
-#aid{position:fixed;right:max(20px,env(safe-area-inset-right,0px));bottom:calc(248px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;font:400 10px 'DM Mono',monospace;letter-spacing:.12em}#aid span{padding:2px 7px;border:1px solid rgba(255,255,255,.2);border-radius:99px;color:rgba(255,255,255,.25)}#aid span.on{border-color:#f2c879;color:#f2c879}@media (pointer:coarse){#aid{bottom:calc(334px + env(safe-area-inset-bottom,0px))}}
+#aid{position:fixed;right:max(16px,env(safe-area-inset-right,0px));bottom:calc(280px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;font:400 10px 'DM Mono',monospace;letter-spacing:.12em}#aid span{padding:2px 7px;border:1px solid rgba(255,255,255,.2);border-radius:99px;color:rgba(255,255,255,.25)}#aid span.on{border-color:#f2c879;color:#f2c879}
 #st small{display:block;margin-top:10px;color:rgba(232,238,242,.45);font:300 11px Outfit,sans-serif;line-height:1.5}`;
   document.head.appendChild(stSt);
   const mk = (t, c, h) => { const e = document.createElement(t); if (c) e.className = c; if (h != null) e.innerHTML = h; return e; };
