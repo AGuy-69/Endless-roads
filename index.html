@@ -35,7 +35,7 @@ html.nofile #nofile{display:grid}html.nofile #load{display:none}
 #gauge svg{width:100%;height:100%;font-family:Outfit,sans-serif;font-weight:300}
 .hud-b{top:calc(16px + env(safe-area-inset-top,0px));bottom:auto;justify-content:flex-start}.meta{text-align:left}
 #tc-wrap{display:none}
-@media (pointer:coarse){#tc-wrap{display:block}#gauge{bottom:calc(190px + env(safe-area-inset-bottom,0px));width:170px;height:170px}}
+@media (pointer:coarse){#tc-wrap{display:block}#gauge{bottom:calc(176px + env(safe-area-inset-bottom,0px));width:150px;height:150px}}
 </style>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=DM+Mono:wght@400;500&family=Outfit:wght@300;400;500&family=Barlow:ital,wght@0,500;0,600;0,700;0,800;1,800&display=swap">
 <link rel="stylesheet" href="assets/ui/menu.css">
@@ -3057,6 +3057,52 @@ self.onmessage = (e) => {
   const terrain = new Terrain(scene, world, jobs, mats, Q);
   const veg = new Vegetation(scene, world, jobs, mats, Q);
   const post = new Post(renderer, Q);
+  // ===== Performance: frame-time overlay (` key, or open with #perf) and automatic render resolution (Settings: Resolution) =====
+  // Auto resolution: once a second the average frame time is checked against 60 fps. Two slow seconds in a row drop the 3D resolution one step (down to 50%); after a stretch of good seconds it
+  // tries one step back up, and if that turns out too slow it backs off for longer. The HUD and the final image stay at full screen resolution.
+  let dynScale = 1;
+  const PF = { on: /perf/.test(location.hash), el: null, last: 0, ring: [], js: 0, gpu: 0, gl: renderer.getContext(), ext: null, q: [], tq: null, wS: 0, wN: 0, slowW: 0, goodT: 0, back: 10, probing: false, probeT: 0, L: 0, auto: true, txt: 0, hold: 0, holdLen: 60, check: 0, before: 0 };
+  try { PF.auto = localStorage.getItem('er-dynres') !== 'f'; } catch (e) { }
+  renderer.info.autoReset = false;   // counted per frame (several passes), reset in frame()
+  PF.ext = renderer.capabilities.isWebGL2 ? PF.gl.getExtension('EXT_disjoint_timer_query_webgl2') : null;   // GPU time (only measured while the overlay is open)
+  const pfApply = () => { dynScale = PF.auto ? 1 - 0.1 * PF.L : 1; const pr = renderer.getPixelRatio(); post.resize(innerWidth * pr, innerHeight * pr, Q.scale * dynScale); };
+  function pfStep(a) {   // a = average frame time (ms) of the last second
+    if (PF.hold > 0) { PF.hold--; return; }
+    if (PF.check > 0 && --PF.check === 0 && a > PF.before * 0.93) {   // a lower resolution did not make it faster: the limit is the CPU, so the picture is not degraded for nothing
+      PF.L = Math.max(0, PF.L - 1); PF.hold = PF.holdLen; PF.holdLen = Math.min(600, PF.holdLen * 2); PF.slowW = PF.goodT = 0; pfApply(); return;
+    }
+    if (PF.probing) { PF.probeT++; if (PF.probeT >= 4) { PF.probing = false; PF.back = Math.max(10, PF.back / 2); } }
+    if (a > 21) PF.slowW++; else PF.slowW = 0;
+    if (PF.slowW >= 2 && PF.L < 5) { PF.before = a; PF.check = 2; PF.L++; PF.slowW = 0; PF.goodT = 0; if (PF.probing) { PF.probing = false; PF.back = Math.min(90, PF.back * 2); } pfApply(); }
+    else if (a <= 18.5) { PF.goodT++; if (PF.goodT >= PF.back && PF.L > 0) { PF.L--; PF.goodT = 0; PF.probing = true; PF.probeT = 0; pfApply(); } }
+    else PF.goodT = 0;
+  }
+  function perfFrame(now) {
+    const d = now - PF.last; PF.last = now; if (!(d > 0) || d > 250) return;   // a tab switch or a long stall is not a frame time
+    PF.ring.push(d); if (PF.ring.length > 180) PF.ring.shift(); PF.wS += d; PF.wN++;
+    if (PF.wS < 1000) return;
+    const a = PF.wS / PF.wN; PF.wS = 0; PF.wN = 0;
+    if (boot || document.hidden || !PF.auto) { PF.slowW = 0; PF.goodT = 0; return; }
+    pfStep(a);
+  }
+  function gpuBegin() { if (!PF.on || !PF.ext || PF.tq) return; PF.tq = PF.gl.createQuery(); PF.gl.beginQuery(PF.ext.TIME_ELAPSED_EXT, PF.tq); }
+  function gpuEnd() {
+    const gl = PF.gl; if (PF.tq) { gl.endQuery(PF.ext.TIME_ELAPSED_EXT); PF.q.push(PF.tq); PF.tq = null; }
+    while (PF.q.length) {
+      const q = PF.q[0]; if (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE) && PF.q.length < 6) break;
+      if (!gl.getParameter(PF.ext.GPU_DISJOINT_EXT) && gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) PF.gpu += (gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6 - PF.gpu) * 0.1;
+      gl.deleteQuery(q); PF.q.shift();
+    }
+  }
+  function perfDraw(now) {
+    if (!PF.el) { const d = document.createElement('pre'); d.id = 'perf'; d.style.cssText = 'position:fixed;left:8px;top:8px;margin:0;padding:6px 8px;background:rgba(0,0,0,.62);color:#9f9;font:11px/1.4 monospace;z-index:20;pointer-events:none;white-space:pre;border-radius:4px'; document.body.appendChild(d); PF.el = d; }
+    PF.el.style.display = PF.on ? 'block' : 'none'; if (!PF.on || now - PF.txt < 500) return; PF.txt = now;
+    const r = PF.ring.slice().sort((x, y) => x - y), n = r.length || 1, avg = r.reduce((t, v) => t + v, 0) / n, p95 = r[Math.min(n - 1, Math.floor(n * 0.95))] || 0, mx = r[n - 1] || 0, i = renderer.info.render;
+    const gpu = PF.ext ? PF.gpu.toFixed(1) + ' ms' : 'n/a', lim = PF.ext && PF.gpu > 0 ? (PF.gpu > PF.js * 1.5 ? 'GPU-bound' : PF.js > PF.gpu * 1.5 ? 'CPU-bound' : 'balanced') : '';
+    PF.el.textContent = 'FPS ' + (1000 / avg).toFixed(0) + '   frame ' + avg.toFixed(1) + ' ms   p95 ' + p95.toFixed(1) + '   max ' + mx.toFixed(0) + '\nJS ' + PF.js.toFixed(1) + ' ms   GPU ' + gpu + '   ' + lim +
+      '\n3D ' + post.w + 'x' + post.h + '  (' + Math.round(Q.scale * dynScale * 100) + '%' + (PF.auto ? ', auto step ' + PF.L + '/5' : ', fixed') + ')   quality ' + qKey + '\ncalls ' + i.calls + '   triangles ' + (i.triangles / 1000).toFixed(0) + 'k   (` hides this)';
+  }
+  addEventListener('keydown', (e) => { if (e.key === '`') PF.on = !PF.on; });
 
   // ===== Weather FX: rain streaks, snow, lightning + thunder, rain sound. Driven by env.wx.rain / env.wx.snow (the Weather setting; they ease in over a few seconds).
   // Drops live in a box around the camera, fixed in the world (they wrap around you as you drive), so they streak past the way real rain does.
@@ -3165,7 +3211,7 @@ self.onmessage = (e) => {
   function resize() {
     const w = innerWidth, h = innerHeight;
     renderer.setSize(w, h, false); camera.aspect = w / h; camera.updateProjectionMatrix();
-    const pr = renderer.getPixelRatio(); post.resize(w * pr, h * pr, Q.scale);
+    const pr = renderer.getPixelRatio(); post.resize(w * pr, h * pr, Q.scale * dynScale);
   }
   addEventListener('resize', resize); resize();
   setTimeout(() => applyDist(dist), 0);
@@ -3224,9 +3270,10 @@ self.onmessage = (e) => {
 
   // Input state
   const keys = {};
-  addEventListener('keydown', (e) => { keys[e.key] = true; });
-  addEventListener('keyup',   (e) => { keys[e.key] = false; });
-  addEventListener('blur', () => { keys.z = keys.Z = false; });   // never get stuck looking back after alt-tab
+  const setKey = (e, v) => { keys[e.key] = v; if (e.key.length === 1) keys[e.key.toLowerCase()] = keys[e.key.toUpperCase()] = v; };   // w / W are one key (Shift must not leave one of them stuck)
+  addEventListener('keydown', (e) => { setKey(e, true); });
+  addEventListener('keyup',   (e) => { setKey(e, false); });
+  addEventListener('blur', () => { for (const k in keys) keys[k] = false; });   // nothing stays held after alt-tab   // never get stuck looking back after alt-tab
 
   // On-screen touch controls
   const touchState = { gas: 0, brake: 0, left: 0, right: 0, back: 0 };
@@ -3272,11 +3319,17 @@ self.onmessage = (e) => {
       transition: background 0.1s;
     }
     .tc-btn.active { background: rgba(255,255,255,0.32); }
-    #tc-left  { left: calc(16px + env(safe-area-inset-left,0px));  bottom: calc(90px + env(safe-area-inset-bottom,0px)); }
-    #tc-right { left: calc(96px + env(safe-area-inset-left,0px));  bottom: calc(90px + env(safe-area-inset-bottom,0px)); }
-    #tc-gas   { right: calc(96px + env(safe-area-inset-right,0px)); bottom: calc(90px + env(safe-area-inset-bottom,0px)); }
-    #tc-brake { right: calc(16px + env(safe-area-inset-right,0px)); bottom: calc(90px + env(safe-area-inset-bottom,0px)); }
-    #tc-back  { left: calc(56px + env(safe-area-inset-left,0px));  bottom: calc(170px + env(safe-area-inset-bottom,0px)); }
+
+    /* LEFT ZONE — steering pair, bottom-left */
+    #tc-left  { left: calc(20px + env(safe-area-inset-left,0px));  bottom: calc(20px + env(safe-area-inset-bottom,0px)); }
+    #tc-right { left: calc(96px + env(safe-area-inset-left,0px));  bottom: calc(20px + env(safe-area-inset-bottom,0px)); }
+
+    /* RIGHT ZONE — pedals stacked vertically, bottom-right */
+    #tc-gas   { right: calc(20px + env(safe-area-inset-right,0px)); bottom: calc(96px + env(safe-area-inset-bottom,0px)); }
+    #tc-brake { right: calc(20px + env(safe-area-inset-right,0px)); bottom: calc(20px  + env(safe-area-inset-bottom,0px)); }
+
+    /* Look-back — above the left steering pair, centred between the two buttons */
+    #tc-back  { left: calc(58px + env(safe-area-inset-left,0px));  bottom: calc(96px + env(safe-area-inset-bottom,0px)); }
   `;
   document.head.appendChild(tcStyle);
 
@@ -3290,7 +3343,12 @@ self.onmessage = (e) => {
   const TX = 0.9, ZW = 1.3, LSENS = 0.22;                                  // contact points: half track / half wheelbase; tyre load sensitivity
   const CORN = [[TX, ZW], [-TX, ZW], [TX, -ZW], [-TX, -ZW]];               // FL, FR, RL, RR  (+X = left, +Z = nose)
   let DROOP = 0.15, BUMP0 = 0.09, BUMP1 = 0.21, ARBF = 5000, ARBR = 0, FRT = 0.5;   // droop limit, bump-stop start, hard stop (m), anti-roll bar rates (N/m), front weight share
-  let suspNodes = [];
+  // Landings and flights. AIRG: extra gravity while the wheels are unloaded (1 = real; jumps get shorter and less floaty). LANDK / REBK: the damper stiffens the harder it is hit, so a hard landing is absorbed
+  // (and does not spring back); the bump stop is plastic, like crushed bodywork and squashed tyres: it stops the car but gives no energy back.
+  // AIRC: stunts. In the air W/S pitch, A/D roll (settings: or only while Shift is held): they are torques (pa / ra = rad/s^2, limited to pmax / rmax rad/s), so the car builds up rotation and keeps it
+  // (momentum) until you counter it; there is no levelling. Without Shift only a light rate damping (damp, 1/s) calms a spin. aero = share of the aerodynamic nose-to-the-flight-path pull that is left in the air.
+  const AIRG = 1.6, LANDK = 2.2, REBK = 0.8, AIRC = { grace: 0.1, grace2: 0.3, pa: 9, pmax: 5.5, ra: 12, rmax: 7, damp: 1.3, aero: 0.2 };
+  let suspNodes = [], airHint = false;
   let rcOn = true, rivalPace = 1, trafficDen = 1, raceLen = 0; try { const rl = +localStorage.getItem('er-racelen'); if ([0, 500, 1000, 2000, 3000, 5000].includes(rl)) raceLen = rl; } catch (e) { } try { const tv = parseFloat(localStorage.getItem('er-traffic')); if (tv >= 0 && tv <= 10) trafficDen = tv; } catch (e) { }                                         // roadside cars on/off, rival pace (settings)
   const lf = (h) => [Math.cos(h), -Math.sin(h)], fw = (h) => [Math.sin(h), Math.cos(h)];
   let rlist = null, camYaw = 0, camY = 0, cockpit = false;
@@ -3331,6 +3389,8 @@ self.onmessage = (e) => {
   const isBrake = () => keys['ArrowDown'] || keys['s'] || keys['S'] || touchState.brake > 0;
   const isLeft = () => keys['ArrowLeft'] || keys['a'] || keys['A'] || touchState.left > 0;
   const isRight = () => keys['ArrowRight'] || keys['d'] || keys['D'] || touchState.right > 0;
+  const airIn = () => ({ on: window.__airKeys !== 's' || !!keys['Shift'], p: (isBrake() ? 1 : 0) - (isGas() ? 1 : 0), r: (isRight() ? 1 : 0) - (isLeft() ? 1 : 0) });   // stunt input: p +1 = nose up (S), r +1 = roll right (D)
+  const airTaper = (rate, dir, max) => (dir === 0 ? 0 : Math.max(0, Math.min(1.6, 1 - rate * dir / max)));   // authority falls to zero at the rate limit, and is bigger when you are fighting the spin
 
   const TB = { on: false, B: null, up: 0, rest: 0, told: false };   // tumble state (see the free rigid body section)
   // while a race is on (countdown or running) the car, traffic and rival settings are locked, R / B / M are off: no swapping to a faster car, no resetting
@@ -3405,7 +3465,7 @@ self.onmessage = (e) => {
 
   // ===== Minimap (heading-up, road ahead highlighted) =====
   const mmSt = document.createElement('style');
-  mmSt.textContent = '#mm{position:fixed;left:max(20px,env(safe-area-inset-left,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));width:170px;height:170px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(8,12,16,.35);box-shadow:0 2px 10px rgba(0,0,0,.5)}@media (pointer:coarse){#mm{bottom:calc(190px + env(safe-area-inset-bottom,0px));width:130px;height:130px}}';
+  mmSt.textContent = '#mm{position:fixed;left:max(20px,env(safe-area-inset-left,0px));bottom:calc(20px + env(safe-area-inset-bottom,0px));width:170px;height:170px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(8,12,16,.35);box-shadow:0 2px 10px rgba(0,0,0,.5)}@media (pointer:coarse){#mm{bottom:calc(176px + env(safe-area-inset-bottom,0px));width:120px;height:120px}}';
   document.head.appendChild(mmSt);
   const mm = document.createElement('canvas'); mm.id = 'mm'; mm.width = mm.height = 340; $('hud').appendChild(mm);
   const mx = mm.getContext('2d');
@@ -3430,7 +3490,7 @@ self.onmessage = (e) => {
     [0.88, 0.30, 2.25, 1], [-0.88, 0.30, 2.25, 1], [0.88, 0.30, -2.25, 1], [-0.88, 0.30, -2.25, 1],          // bumper corners
     [0.85, 0.85, 2.1, 1], [-0.85, 0.85, 2.1, 1], [0.85, 0.85, -2.1, 1], [-0.85, 0.85, -2.1, 1],              // bonnet / boot corners
     [0.8, 1.38, 0.9, 1], [-0.8, 1.38, 0.9, 1], [0.8, 1.38, -0.9, 1], [-0.8, 1.38, -0.9, 1]];                // roof corners
-  const RBG = { kc: 700000, cd: 14000, mb: 0.55 };   // contact stiffness (N/m), damping (N s/m), bodywork friction
+  const RBG = { kc: 700000, cd: 14000, cdc: 42000, mb: 0.55 };   // contact stiffness (N/m), damping (N s/m), bodywork friction
   const qmul = (a, b) => [a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1], a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0], a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3], a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2]];
   const qax = (x, y, z, a) => { const s = Math.sin(a / 2); return [x * s, y * s, z * s, Math.cos(a / 2)]; };
   const qEuler = (hd, pitch, roll) => qmul(qmul(qax(0, 1, 0, hd), qax(1, 0, 0, -pitch)), qax(0, 0, 1, roll));   // the car mesh's Euler order: Y (heading), X (-pitch), Z (roll)
@@ -3442,13 +3502,13 @@ self.onmessage = (e) => {
     const gx = (gfn(P[0] + 1.2, P[2]) - gfn(P[0] - 1.2, P[2])) / 2.4, gz = (gfn(P[0], P[2] + 1.2) - gfn(P[0], P[2] - 1.2)) / 2.4, nl = Math.hypot(gx, 1, gz), nx = -gx / nl, ny = 1 / nl, nz = -gz / nl;   // ground normal
     for (let k = 0; k < n; k++) {
       const R = qmat(B.q), w0 = R[0] * wb[0] + R[1] * wb[1] + R[2] * wb[2], w1 = R[3] * wb[0] + R[4] * wb[1] + R[5] * wb[2], w2 = R[6] * wb[0] + R[7] * wb[1] + R[8] * wb[2];
-      let Fx = 0, Fy = -B.m * 9.81, Fz = 0, Tx = 0, Ty = 0, Tz = 0, sdSum = 0, sWet = 0; wheels = 0; touch = 0; const bf = 1 - 0.95 * B.flood;
+      let Fx = 0, Fy = -B.m * 9.81 * (k > 0 && touch === 0 ? AIRG : 1), Fz = 0, Tx = 0, Ty = 0, Tz = 0, sdSum = 0, sWet = 0; wheels = 0; touch = 0; const bf = 1 - 0.95 * B.flood;
       for (const pt of RB_PTS) {
         const lx = pt[0] - B.cg[0], ly = pt[1] - B.cg[1], lz = pt[2] - B.cg[2], rx = R[0] * lx + R[1] * ly + R[2] * lz, ry = R[3] * lx + R[4] * ly + R[5] * lz, rz = R[6] * lx + R[7] * ly + R[8] * lz;
         const px = P[0] + rx, py = P[1] + ry, pz = P[2] + rz, vx = V[0] + w1 * rz - w2 * ry, vy = V[1] + w2 * rx - w0 * rz, vz = V[2] + w0 * ry - w1 * rx, g = gfn(px, pz);
         let fx = 0, fy = 0, fz = 0; const d = (g - py) * ny;
         if (d > 0) {                                                                               // in the ground: spring + damper along the ground normal, then friction
-          const vn = vx * nx + vy * ny + vz * nz, Fn = RBG.kc * Math.min(d, 0.8) - RBG.cd * vn;
+          const vn = vx * nx + vy * ny + vz * nz, Fn = RBG.kc * Math.min(d, 0.8) - (vn < 0 ? RBG.cdc : RBG.cd) * vn;   // sinking in is damped hard (crush, squashed tyres), springing out is not: no bounce
           if (Fn > 0) {
             touch++; fx += nx * Fn; fy += ny * Fn; fz += nz * Fn; const tx = vx - vn * nx, ty = vy - vn * ny, tz = vz - vn * nz;
             if (pt[3] === 0) {                                                                      // a tyre grips sideways and rolls along its own axis
@@ -3467,7 +3527,8 @@ self.onmessage = (e) => {
         Fx += fx; Fy += fy; Fz += fz; Tx += ry * fz - rz * fy; Ty += rz * fx - rx * fz; Tz += rx * fy - ry * fx;
       }
       V[0] += Fx / B.m * h; V[1] += Fy / B.m * h; V[2] += Fz / B.m * h; P[0] += V[0] * h; P[1] += V[1] * h; P[2] += V[2] * h;
-      const t0 = R[0] * Tx + R[3] * Ty + R[6] * Tz, t1 = R[1] * Tx + R[4] * Ty + R[7] * Tz, t2 = R[2] * Tx + R[5] * Ty + R[8] * Tz;   // torque in body axes
+      let t0 = R[0] * Tx + R[3] * Ty + R[6] * Tz; const t1 = R[1] * Tx + R[4] * Ty + R[7] * Tz; let t2 = R[2] * Tx + R[5] * Ty + R[8] * Tz;   // torque in body axes
+      if (B.ctl && touch === 0) { t0 -= I[0] * AIRC.pa * B.ctl.p * airTaper(-wb[0], B.ctl.p, AIRC.pmax); t2 += I[2] * AIRC.ra * B.ctl.r * airTaper(wb[2], B.ctl.r, AIRC.rmax); }   // stunt control of the flying car (body axes: x = pitch, negative = nose up)
       wb[0] += (t0 - (wb[1] * I[2] * wb[2] - wb[2] * I[1] * wb[1])) / I[0] * h; wb[1] += (t1 - (wb[2] * I[0] * wb[0] - wb[0] * I[2] * wb[2])) / I[1] * h; wb[2] += (t2 - (wb[0] * I[1] * wb[1] - wb[1] * I[0] * wb[0])) / I[2] * h;
       if (sWet > 0) { const dmp = Math.exp(-4.0 * sWet * h); wb[0] *= dmp; wb[1] *= dmp; wb[2] *= dmp; }   // water damps tumbling
       const wm = Math.hypot(wb[0], wb[1], wb[2]); if (wm > 25) { const k2 = 25 / wm; wb[0] *= k2; wb[1] *= k2; wb[2] *= k2; }
@@ -3484,7 +3545,7 @@ self.onmessage = (e) => {
     TB.on = true; TB.up = 0; TB.rest = 0; TB.told = false; car.thrS = 0;
   }
   function tumbleStep(dt) {
-    const B = TB.B; gnd(B.P[0], B.P[2]); const mu = world._d < road.flat ? 0.9 : 0.6, info = rbStep(B, dt, gndDry, mu), R = info.R, O = rbOrigin(B, R), E = qEul(R);
+    const B = TB.B; gnd(B.P[0], B.P[2]); const mu = world._d < road.flat ? 0.9 : 0.6; { const a = airIn(); B.ctl = a.on && car.air ? a : null; } const info = rbStep(B, dt, gndDry, mu), R = info.R, O = rbOrigin(B, R), E = qEul(R);
     car.x = O[0]; car.y = O[1]; car.z = O[2]; car.pitch = E.pitch; car.roll = E.roll; car.vy = B.V[1]; car.flood = B.flood; car.air = info.touch === 0; car.gc = 0; car.sdm = info.sd; car.wat = Math.min(1, B.flood + (info.sd > 0 ? 0.5 : 0));
     const fh = Math.hypot(R[2], R[8]); if (fh > 0.3) car.hd = Math.atan2(R[2], R[8]);
     const f = fw(car.hd), l = lf(car.hd); car.u = B.V[0] * f[0] + B.V[2] * f[1]; car.v = B.V[0] * l[0] + B.V[2] * l[1]; car.speed = car.u;
@@ -3505,7 +3566,7 @@ self.onmessage = (e) => {
   function updateCar(dt) {
     car.dt = dt; if (TB.on) { qlist(); tumbleStep(dt); return; } qlist(); gearbox(dt); car.absAct = car.tcsAct = car.escAct = 0; car.wspin = car.lockF = car.lockR = 0;
     gnd(car.x, car.z); const d = world._d; car.dRoad = d;
-    const mu = (d < road.hw ? 1.3 : d < road.flat ? 1.15 : 1.0) * (1 - 0.2 * (env.wet || 0)) * MUK, rr = d < road.flat ? 14 : RRO;
+    const mu = (d < road.hw ? 1.3 : d < road.flat ? 1.15 : 1.12) * (1 - 0.2 * (env.wet || 0)) * MUK, rr = d < road.flat ? 14 : RRO;
     const thr = isGas(), brk = isBrake(), hand = keys[' '];
     // steering: angle limited by speed, ramps toward target (no instant snap)
     const maxSt = SL / (1 + Math.abs(car.u) * SSP), tgt = ((isLeft() ? 1 : 0) - (isRight() ? 1 : 0)) * maxSt;
@@ -3560,6 +3621,8 @@ self.onmessage = (e) => {
     const kF = KS * FRT / 2, kR = KS * (1 - FRT) / 2, F0f = M * G * FRT / 2, F0r = M * G * (1 - FRT) / 2, cc = CS / 4;
     const kk = [kF, kF, kR, kR], F0 = [F0f, F0f, F0r, F0r], arm = [CGA, CGA, -CGB, -CGB];   // spring rates, static corner loads, lever arms about the CG
     const HP = HCG * 0.85, HR = HCG * 0.9, IY = IZ * 0.9, IX = M * 0.3, aU = Math.abs(car.u);
+    let acR = 0; const AI = airIn();   // in the air for longer than a bump: stunt torques (or, without Shift, a light rate damping)
+    const gr = AI.on && !keys['Shift'] ? AIRC.grace2 : AIRC.grace; if (car.air && (car.airT || 0) > gr) acR = Math.min(1, (car.airT - gr) / 0.15);
     const FxG = sxg / dt * car.gc, FyG = syg / dt * car.gc;     // tyre forces act at ground level, a CG-height below the body: they squat/dive/roll it
     const nS = Math.max(1, Math.ceil(dt / 0.006)), hs = dt / nS, Fa = [0, 0, 0, 0], Fc = [0, 0, 0, 0], ex = [0, 0, 0, 0], Fb = [0, 0, 0, 0], HBt = Math.max(0.2, HCG - 0.12), bf = 1 - 0.95 * car.flood; let sdm = 0;
     for (let s = 0; s < nS; s++) {
@@ -3568,8 +3631,8 @@ self.onmessage = (e) => {
         const e = car.yc + arm[i] * sp + CORN[i][0] * sr - Hw[i];                                   // extension vs static ride height (+ = body high / wheel hanging)
         const ed = car.vy + arm[i] * car.pr + CORN[i][0] * car.rrt - Hwd[i]; ex[i] = e; let F = 0;
         if (e < DROOP) {                                                                           // wheel on the ground (past the droop limit it hangs in the air)
-          F = F0[i] - kk[i] * e - (ed < 0 ? 0.8 : 1.4) * cc * ed;                                  // spring + damper (stiffer on rebound than bump)
-          if (e < -BUMP0) F += 10 * kk[i] * (-BUMP0 - e) - (ed < 0 ? 2 * cc * ed : 0);             // progressive bump stop
+          F = F0[i] - kk[i] * e - (ed < 0 ? 0.8 + LANDK * Math.min(1, -ed / 5) : 1.4 + REBK * Math.min(1, ed / 4)) * cc * ed;   // spring + damper: stiffer on rebound, and stiffer the harder the hit
+          if (e < -BUMP0 && ed < 0) F += 10 * kk[i] * (-BUMP0 - e) - 2 * cc * ed;                  // bump stop: pushes back only while still sinking (no springing back off it)
         }
         Fc[i] = F;
       }
@@ -3584,15 +3647,21 @@ self.onmessage = (e) => {
         Fb[i] = buoyCorner(sd, car.vy + arm[i] * car.pr + CORN[i][0] * car.rrt, bf, M); Fs += Fb[i]; Tp += Fb[i] * arm[i]; Tr += Fb[i] * CORN[i][0];
       }
       if (sdm > 0) { const dmp = Math.exp(-2.5 * Math.min(1, sdm / 0.5) * hs); car.pr *= dmp; car.rrt *= dmp; }   // the water damps pitching and rolling
-      const dry = 1 - Math.min(1, sdm / 0.3); Tp += (-4 * aU * aU * (car.pitch - Math.atan2(car.vy, Math.max(aU, 6))) - 90 * aU * car.pr) * dry * M / 1200; Tr -= 6 * aU * car.rrt * dry * M / 1200;   // aero: in the air the nose drifts toward the flight path
-      car.vy += (Fs / M - G) * hs; car.yc += car.vy * hs;                                           // gravity acts on the CG; only the springs hold the car up
+      const dry = 1 - Math.min(1, sdm / 0.3); Tp += (-4 * aU * aU * (car.pitch - Math.atan2(car.vy, Math.max(aU, 6))) - 90 * aU * car.pr) * dry * (car.air ? AIRC.aero : 1) * M / 1200; Tr -= 6 * aU * car.rrt * dry * (car.air ? AIRC.aero : 1) * M / 1200;   // aero: in the air the nose drifts toward the flight path
+      if (acR > 0) {
+        if (AI.on) { Tp += IY * AIRC.pa * AI.p * airTaper(car.pr, AI.p, AIRC.pmax) * acR; Tr += IX * AIRC.ra * AI.r * airTaper(car.rrt, AI.r, AIRC.rmax) * acR; }
+        else { Tp -= IY * AIRC.damp * car.pr * acR; Tr -= IX * AIRC.damp * car.rrt * acR; }
+      }
+      car.vy += (Fs / M - G * (1 + (AIRG - 1) * Math.max(0, Math.min(1, 1 - Fs / (M * G))))) * hs; car.yc += car.vy * hs;   // gravity acts on the CG; only the springs hold the car up (unloaded: heavier)
       car.pr += Tp / IY * hs; car.pitch += car.pr * hs; car.rrt += Tr / IX * hs; car.roll += car.rrt * hs;
       let pen = 0; const sp2 = Math.sin(car.pitch), sr2 = Math.sin(car.roll);                         // hard stops: the body can't sink into the road
       for (let i = 0; i < 4; i++) { const e = car.yc + arm[i] * sp2 + CORN[i][0] * sr2 - Hw[i]; if (-BUMP1 - e > pen) pen = -BUMP1 - e; }
       if (pen > 0) { car.yc += pen; if (car.vy < 0) car.vy = 0; car.pr *= 0.9; car.rrt *= 0.9; }
     }
     let nC = 0, Fsum = 0; for (let i = 0; i < 4; i++) { car.e[i] = Math.max(-BUMP1, Math.min(DROOP, ex[i])); if (ex[i] < DROOP) nC++; Fsum += Fa[i]; }
-    car.air = nC === 0; car.gc = Math.min(1, Fsum / (M * G));
+    car.air = nC === 0; car.gc = Math.min(1, Fsum / (M * G)); car.airT = car.air ? (car.airT || 0) + dt : 0;
+    if (car.airT > 0.6 && !airHint) { airHint = true; try { if (!localStorage.getItem('er-airhint')) { localStorage.setItem('er-airhint', '1'); toast('In the air: W/S pitch, A/D roll'); } } catch (e) { } }
+    if (car.air && car.airT > AIRC.grace && !AI.on) car.r -= car.r * (1 - Math.exp(-dt * AIRC.damp));   // spin damping (not in stunt mode: there the spin is yours)
     car.sdm = sdm; car.wat += (Math.min(1, sdm / 0.5) - car.wat) * Math.min(1, dt * 6);
     if (sdm > 0.05) car.flood = Math.min(1, car.flood + dt * (WATER.leak + 0.5 * Math.max(0, Math.min(1, (sdm - 0.25) / 0.5)))); else car.flood = Math.max(0, car.flood - dt * 0.05);   // it leaks in, faster the deeper it sits
     // slope gravity (only while the tyres carry the car) + tyre loads: per-axle, load-sensitive (transfer costs grip), reduced on steep ground
@@ -4036,7 +4105,7 @@ self.onmessage = (e) => {
   // ===== Settings panel (gear button / Esc) =====
   const stSt = document.createElement('style');
   stSt.textContent = `#distbox{display:none}
-#st-btn{position:fixed;top:calc(46px + env(safe-area-inset-top,0px));left:max(16px,env(safe-area-inset-left,0px));width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(8,12,16,.35);color:rgba(255,255,255,.8);font-size:17px;line-height:32px;text-align:center;cursor:pointer;pointer-events:auto;user-select:none;backdrop-filter:blur(6px)}
+#st-btn{position:fixed;top:calc(16px + env(safe-area-inset-top,0px));left:calc(58px + env(safe-area-inset-left,0px));width:34px;height:34px;border-radius:50%;border:1px solid rgba(255,255,255,.3);background:rgba(8,12,16,.35);color:rgba(255,255,255,.8);font-size:17px;line-height:32px;text-align:center;cursor:pointer;pointer-events:auto;user-select:none;backdrop-filter:blur(6px)}
 #st-btn:hover{border-color:#f2c879;color:#f2c879}
 #st{position:fixed;top:calc(90px + env(safe-area-inset-top,0px));left:max(16px,env(safe-area-inset-left,0px));width:290px;max-height:calc(100% - 130px - env(safe-area-inset-top,0px) - 200px);overflow:auto;padding:14px 16px;border:1px solid rgba(255,255,255,.3);border-radius:16px;background:rgba(8,12,16,.55);backdrop-filter:blur(10px);color:#e8eef2;font:300 13px Outfit,sans-serif;pointer-events:auto;display:none}
 #st.open{display:block}
@@ -4048,7 +4117,7 @@ self.onmessage = (e) => {
 .st-seg button.on{border-color:#f2c879;color:#f2c879}
 #st input[type=range]{width:130px;accent-color:#f2c879}
 .st-sw{width:20px;height:20px;border-radius:50%;border:1px solid rgba(255,255,255,.35);padding:0;cursor:pointer}.st-sw.on{outline:1px solid #f2c879;outline-offset:2px}
-#aid{position:fixed;right:max(20px,env(safe-area-inset-right,0px));bottom:calc(248px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;font:400 10px 'DM Mono',monospace;letter-spacing:.12em}#aid span{padding:2px 7px;border:1px solid rgba(255,255,255,.2);border-radius:99px;color:rgba(255,255,255,.25)}#aid span.on{border-color:#f2c879;color:#f2c879}@media (pointer:coarse){#aid{bottom:calc(370px + env(safe-area-inset-bottom,0px))}}
+#aid{position:fixed;right:max(20px,env(safe-area-inset-right,0px));bottom:calc(248px + env(safe-area-inset-bottom,0px));display:flex;gap:6px;font:400 10px 'DM Mono',monospace;letter-spacing:.12em}#aid span{padding:2px 7px;border:1px solid rgba(255,255,255,.2);border-radius:99px;color:rgba(255,255,255,.25)}#aid span.on{border-color:#f2c879;color:#f2c879}@media (pointer:coarse){#aid{bottom:calc(334px + env(safe-area-inset-bottom,0px))}}
 #st small{display:block;margin-top:10px;color:rgba(232,238,242,.45);font:300 11px Outfit,sans-serif;line-height:1.5}`;
   document.head.appendChild(stSt);
   const mk = (t, c, h) => { const e = document.createElement(t); if (c) e.className = c; if (h != null) e.innerHTML = h; return e; };
@@ -4067,9 +4136,10 @@ self.onmessage = (e) => {
   }
   const hm = (t) => String(Math.floor(t)).padStart(2, '0') + ':' + String(Math.floor((t % 1) * 60)).padStart(2, '0');
   try { const v = parseFloat(localStorage.getItem('er-hlb')); if (v >= 0.2 && v <= 1.5) window.__hlB = v; } catch (e) { }
-  try { const v = parseFloat(localStorage.getItem('er-fovb')); if (v >= 0 && v <= 35) window.__fovBoost = v; const m = parseFloat(localStorage.getItem('er-mb')); if (m === 0 || m === 1 || m === 1.7) window.__mbLvl = m; } catch (e) { }
+  try { const v = parseFloat(localStorage.getItem('er-fovb')); if (v >= 0 && v <= 35) window.__fovBoost = v; const ak = localStorage.getItem('er-airkeys'); if (ak === 'a' || ak === 's') window.__airKeys = ak; const m = parseFloat(localStorage.getItem('er-mb')); if (m === 0 || m === 1 || m === 1.7) window.__mbLvl = m; } catch (e) { }
   head('Graphics');
   seg('Quality', [['low', 'Low'], ['med', 'Medium'], ['high', 'High']], () => qKey, (k) => applyQuality(k));
+  seg('Resolution', [['a', 'Auto'], ['f', 'Fixed']], () => (PF.auto ? 'a' : 'f'), (k) => { PF.auto = k === 'a'; PF.L = 0; PF.slowW = PF.goodT = PF.hold = PF.check = 0; try { localStorage.setItem('er-dynres', k); } catch (e) { } pfApply(); });
   slide('Draw distance', 0.5, 2.5, 0.1, () => dist, (v) => applyDist(v), (v) => v.toFixed(1) + '\u00d7');
   slide('Field of view', 50, 90, 1, () => window.__fov || 62, (v) => { window.__fov = v; }, (v) => v + '\u00b0');
   slide('Speed FOV boost', 0, 35, 1, () => window.__fovBoost ?? 22, (v) => { window.__fovBoost = v; try { localStorage.setItem('er-fovb', String(v)); } catch (e) { } }, (v) => '+' + v + '\u00b0');
@@ -4088,6 +4158,7 @@ self.onmessage = (e) => {
     const ss = Array.from({ length: PSH }, (_, si) => { const b = mk('button', 'st-sw'); b.onclick = () => { setPaintI(pFam(paintI) * PSH + si); syncs.forEach((q) => q()); }; g2.append(b); return b; });
     const sync = () => { const f = pFam(paintI); fs.forEach((b, i) => b.classList.toggle('on', i === f)); ss.forEach((b, si) => { b.style.background = pCss(PAINT[f * PSH + si]); b.title = PFAM[f].l[si]; b.classList.toggle('on', si === pShade(paintI)); }); };
     syncs.push(sync); sync(); stP.append(row, row2); }
+  seg('Air stunts', [['a', 'W/S/A/D'], ['s', 'Hold Shift']], () => (window.__airKeys === 's' ? 's' : 'a'), (k) => { window.__airKeys = k; try { localStorage.setItem('er-airkeys', k); } catch (e) { } });
   slide('Smooth shading', 0, 80, 1, () => smoothDeg, (v) => { smoothDeg = v; shadeSmooth(v); }, (v) => (v ? v + '\u00b0' : 'Flat'));
   seg('Tyre marks', [['1', 'On'], ['0', 'Off']], () => (marksOn ? '1' : '0'), (k) => { marksOn = k === '1'; });
   seg('Gearbox', [['a', 'Auto'], ['m', 'Manual']], () => (manual ? 'm' : 'a'), (k) => { manual = k === 'm'; }, true);
@@ -4114,7 +4185,7 @@ self.onmessage = (e) => {
   slide('Traffic density', 0, 10, 0.5, () => trafficDen, (v) => { trafficDen = v; try { localStorage.setItem('er-traffic', String(v)); } catch (e) { } }, (v) => (v ? v.toFixed(1) + '\u00d7' : 'None'), true);
   seg('Race length', [['0', 'Random'], ['500', '0.5 km'], ['1000', '1 km'], ['2000', '2 km'], ['3000', '3 km'], ['5000', '5 km']], () => String(raceLen), (k) => { raceLen = +k; try { localStorage.setItem('er-racelen', k); } catch (e) { } }, true);
   seg('Rival pace', [['0.88', 'Easy'], ['1', 'Normal'], ['1.1', 'Hard']], () => String(rivalPace), (k) => { rivalPace = +k; }, true);
-  stP.append(mk('small', '', 'L headlights (blips next to a car you can challenge) \u00b7 X forfeit \u00b7 W/S gas \u00b7 A/D steer \u00b7 Space handbrake \u00b7 C camera \u00b7 Z (hold) look back \u00b7 R reset rotation \u00b7 Shift+R back to road \u00b7 M gearbox (E/Q shift) \u00b7 G quality \u00b7 V paint \u00b7 U units \u00b7 N mute \u00b7 Esc pause menu'));
+  stP.append(mk('small', '', 'L headlights (blips next to a car you can challenge) \u00b7 X forfeit \u00b7 W/S gas \u00b7 A/D steer \u00b7 Space handbrake \u00b7 in the air W/S pitch, A/D roll \u00b7 C camera \u00b7 Z (hold) look back \u00b7 R reset rotation \u00b7 Shift+R back to road \u00b7 M gearbox (E/Q shift) \u00b7 G quality \u00b7 V paint \u00b7 U units \u00b7 N mute \u00b7 Esc pause menu'));
   stP.append(mk('small', '', 'Car models: \u201cUltimate Low-Poly Car Pack\u201d by ProbablyNotG, CC BY 4.0'));
   const stToggle = () => { stP.classList.toggle('open'); syncs.forEach((f) => f()); };
   stP.addEventListener('keydown', (e) => e.stopPropagation());
@@ -5144,7 +5215,7 @@ self.onmessage = (e) => {
   document.addEventListener('fullscreenchange', refreshTiles);
 
   // ---- sub pages
-  const KEYLIST = [['W / S', 'Gas / brake'], ['A / D', 'Steer'], ['Space', 'Handbrake'], ['C', 'Chase / cockpit view'], ['Z (hold)', 'Look back'], ['R', 'Reset rotation in place (not during a race)'], ['Shift+R', 'Back onto the road (not during a race)'], ['L', 'Headlights on / off. Next to a car you can challenge, L blips the lights to start a street race'], ['X', 'Forfeit a street race'], ['M', 'Gearbox mode (E / Q shift)'], ['V', 'Paint colour'], ['B', 'Next car'], ['G', 'Graphics quality'], ['U', 'Units'], ['N', 'Engine sound on / off'], ['Esc', 'Pause menu']];
+  const KEYLIST = [['W / S', 'Gas / brake'], ['A / D', 'Steer'], ['Space', 'Handbrake'], ['W / S / A / D (in the air)', 'Stunts: S nose up, W nose down, A / D roll. The spin stays until you counter it (Settings: Air stunts can require Shift)'], ['C', 'Chase / cockpit view'], ['Z (hold)', 'Look back'], ['R', 'Reset rotation in place (not during a race)'], ['Shift+R', 'Back onto the road (not during a race)'], ['L', 'Headlights on / off. Next to a car you can challenge, L blips the lights to start a street race'], ['X', 'Forfeit a street race'], ['M', 'Gearbox mode (E / Q shift)'], ['V', 'Paint colour'], ['B', 'Next car'], ['G', 'Graphics quality'], ['U', 'Units'], ['N', 'Engine sound on / off'], ['Esc', 'Pause menu']];
   const PAGES = {
     controls: { title: 'CONTROLS', build: (b) => { b.innerHTML = '<div class="hm-keys">' + KEYLIST.map((k) => '<div><kbd>' + k[0] + '</kbd><span>' + k[1] + '</span></div>').join('') + '</div><p style="margin-top:12px"><small>Touch: on-screen arrows, pedals and a look-back button appear in Free Drive. Gamepad: D-pad / stick + A to select, B to go back, Start to pause (menus only for now).</small></p>'; } },
     credits: { title: 'CREDITS', build: (b) => { b.innerHTML = '<p><b>Car models</b><br>“Ultimate Low-Poly Car Pack” and “Ultimate Low-Poly Car Pack 2” by ProbablyNotG, CC BY 4.0</p><p><b>Engine</b><br>three.js (MIT)</p><p><b>Fonts</b><br>Barlow, Outfit, DM Mono via Google Fonts (SIL Open Font License)</p><p><small>Terrain, road, vegetation, weather, sound mixing and the driving model are original to this game.</small></p>'; } },
@@ -5553,6 +5624,7 @@ self.onmessage = (e) => {
   }
   let boot = true, bootStart = performance.now(), bootMax = 1;
   function frame(now, dt) {
+    renderer.info.reset();
     terrain.update(camPos.x, camPos.z);
     veg.update(camera, dt);
     env.update(dt, camera.position, camPos);
@@ -5560,13 +5632,15 @@ self.onmessage = (e) => {
     camera.updateMatrixWorld();
     camera.matrixWorldInverse.copy(camera.matrixWorld).invert();
     mats.U.uSunV.value.copy(env.sunDir).transformDirection(camera.matrixWorldInverse);
+    gpuBegin();
     csm.update(camera, env.sunDir, focus, env.sunVis);
     csm.prepare(camera);
     post.render(scene, camera, env, now / 1000);
+    gpuEnd();
   }
 
-  function tick(now) {
-    requestAnimationFrame(tick);
+  function tick(now) { requestAnimationFrame(tick); perfFrame(now); const t = performance.now(); tick0(now); PF.js += (performance.now() - t - PF.js) * 0.1; perfDraw(now); }
+  function tick0(now) {
     const dt = Math.min(0.05, (now - (tick.last || now)) / 1000); tick.last = now;
     if (boot) {
       const pend = jobs.pending - veg.pending + terrain.nearPending + veg.nearPending + bootNeed.size;
